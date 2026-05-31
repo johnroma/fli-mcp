@@ -354,14 +354,20 @@ def _match_flight(flights: list[Any], flight_numbers: list[str] | None) -> Any |
         segments = _flight_segments(flight)
         if len(segments) != len(want):
             continue
-        if all(token in _segment_identifiers(segment) for token, segment in zip(want, segments, strict=True)):
+        if all(
+            token in _segment_identifiers(segment)
+            for token, segment in zip(want, segments, strict=True)
+        ):
             return flight
     return None
 
 
 def _flight_idents(flight: Any) -> list[str]:
     """Human-readable airline+number labels for each segment of a result."""
-    return [f"{_airline_code(segment.airline)}{segment.flight_number}" for segment in _flight_segments(flight)]
+    return [
+        f"{_airline_code(segment.airline)}{segment.flight_number}"
+        for segment in _flight_segments(flight)
+    ]
 
 
 def _serialize_flight_segment(segment: Any) -> dict[str, Any]:
@@ -478,7 +484,11 @@ def _serialize_flight_result(
     out = {
         "price": price_segment.price,
         "currency": price_segment.currency or CONFIG.default_currency,
-        "segments": [_serialize_flight_segment(flight_segment) for segment in segments for flight_segment in segment.legs],
+        "segments": [
+            _serialize_flight_segment(flight_segment)
+            for segment in segments
+            for flight_segment in segment.legs
+        ],
     }
     out.update(_flight_extras(price_segment))
     if booking_url:
