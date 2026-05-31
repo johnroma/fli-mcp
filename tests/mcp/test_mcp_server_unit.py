@@ -1,7 +1,7 @@
 """Unit tests for MCP server serialization helpers and error propagation.
 
 Targets functions that are only reached via integration tests in the existing
-suite: _airline_code, _serialize_flight_leg, _serialize_layover,
+suite: _airline_code, _serialize_flight_segment, _serialize_layover,
 _flight_extras, and the bare-except error path in _execute_flight_search.
 """
 
@@ -21,7 +21,7 @@ from fli.mcp.server import (
     _match_flight,
     _serialize_booking_option,
     _serialize_date_result,
-    _serialize_flight_leg,
+    _serialize_flight_segment,
     _serialize_layover,
 )
 
@@ -51,7 +51,7 @@ class TestAirlineCode:
         assert _airline_code("AA") == "AA"
 
 
-class TestSerializeFlightLeg:
+class TestSerializeFlightSegment:
     def _make_leg(self, **overrides):
         leg = MagicMock()
         leg.departure_airport = "JFK"
@@ -73,8 +73,8 @@ class TestSerializeFlightLeg:
         return leg
 
     def test_required_fields_always_present(self):
-        leg = self._make_leg()
-        result = _serialize_flight_leg(leg)
+        segment = self._make_leg()
+        result = _serialize_flight_segment(segment)
         for key in (
             "departure_airport",
             "arrival_airport",
@@ -88,8 +88,8 @@ class TestSerializeFlightLeg:
             assert key in result
 
     def test_none_optional_fields_excluded(self):
-        leg = self._make_leg()
-        result = _serialize_flight_leg(leg)
+        segment = self._make_leg()
+        result = _serialize_flight_segment(segment)
         assert "departure_airport_name" not in result
         assert "arrival_airport_name" not in result
         assert "operating_airline" not in result
@@ -97,40 +97,40 @@ class TestSerializeFlightLeg:
         assert "legroom" not in result
 
     def test_overnight_true_included(self):
-        leg = self._make_leg(overnight=True)
-        result = _serialize_flight_leg(leg)
+        segment = self._make_leg(overnight=True)
+        result = _serialize_flight_segment(segment)
         assert result.get("overnight") is True
 
     def test_overnight_false_excluded(self):
-        leg = self._make_leg(overnight=False)
-        result = _serialize_flight_leg(leg)
+        segment = self._make_leg(overnight=False)
+        result = _serialize_flight_segment(segment)
         assert "overnight" not in result
 
     def test_operating_airline_included_when_set(self):
         op = MagicMock()
         op.name = "B6"
-        leg = self._make_leg(operating_airline=op)
-        result = _serialize_flight_leg(leg)
+        segment = self._make_leg(operating_airline=op)
+        result = _serialize_flight_segment(segment)
         assert result["operating_airline"] == "B6"
 
     def test_amenities_included_with_truthy_fields(self):
         from fli.models import Amenities
 
-        leg = self._make_leg(amenities=Amenities(wifi=True))
-        result = _serialize_flight_leg(leg)
+        segment = self._make_leg(amenities=Amenities(wifi=True))
+        result = _serialize_flight_segment(segment)
         assert "amenities" in result
         assert result["amenities"]["wifi"] is True
 
     def test_amenities_excluded_when_none(self):
-        leg = self._make_leg(amenities=None)
-        result = _serialize_flight_leg(leg)
+        segment = self._make_leg(amenities=None)
+        result = _serialize_flight_segment(segment)
         assert "amenities" not in result
 
     def test_amenities_excluded_when_all_fields_are_none(self):
         from fli.models import Amenities
 
-        leg = self._make_leg(amenities=Amenities())
-        result = _serialize_flight_leg(leg)
+        segment = self._make_leg(amenities=Amenities())
+        result = _serialize_flight_segment(segment)
         # model_dump(exclude_none=True) on an all-None Amenities → empty dict → not included
         assert "amenities" not in result
 
@@ -248,7 +248,7 @@ class TestExecuteFlightSearchNetworkError:
 
 
 def _make_bookable_leg(code="BA", number="178"):
-    """Build a flight leg mock with optional fields set to None for clean serialization."""
+    """Build a flight segment mock with optional fields set to None for clean serialization."""
     leg = MagicMock()
     airline = MagicMock()
     airline.name = code

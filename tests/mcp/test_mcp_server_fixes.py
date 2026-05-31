@@ -125,7 +125,7 @@ class TestSerializeFlightResult:
         )
 
     def test_round_trip_price_not_doubled(self):
-        """Explicit check that the price is not the sum of both legs."""
+        """Explicit check that the price is not the sum of both slices."""
         outbound = _make_flight(price=300.0)
         return_flight = _make_flight(price=300.0)
 
@@ -134,8 +134,8 @@ class TestSerializeFlightResult:
         assert result["price"] != 600.0, "Price must not be doubled"
         assert result["price"] == 300.0
 
-    def test_round_trip_includes_legs_from_both_directions(self):
-        """Round-trip result must include legs from both outbound and return flights."""
+    def test_round_trip_includes_segments_from_both_directions(self):
+        """Round-trip result must include segments from both outbound and return flights."""
         outbound_leg = _make_leg("TLV", "ATH")
         return_leg = _make_leg("ATH", "TLV")
         outbound = _make_flight(price=454.0, legs=[outbound_leg])
@@ -143,7 +143,7 @@ class TestSerializeFlightResult:
 
         result = _serialize_flight_result((outbound, return_flight), is_round_trip=True)
 
-        assert len(result["legs"]) == 2
+        assert len(result["segments"]) == 2
 
     def test_round_trip_non_tuple_falls_back_to_single_flight(self):
         """If flight is not a tuple, treat it as a one-way even if is_round_trip=True."""
@@ -152,7 +152,7 @@ class TestSerializeFlightResult:
         assert result["price"] == 500.0
 
     def test_multi_city_three_legs(self):
-        """Multi-city (3-leg) tuple should serialize without crashing."""
+        """Multi-city (3-slice) tuple should serialize without crashing."""
         leg1 = _make_flight(price=0.0, legs=[_make_leg("JFK", "LAX")])
         leg2 = _make_flight(price=0.0, legs=[_make_leg("LAX", "ORD")])
         leg3 = _make_flight(price=750.0, legs=[_make_leg("ORD", "JFK")])
@@ -160,10 +160,10 @@ class TestSerializeFlightResult:
         result = _serialize_flight_result((leg1, leg2, leg3), is_round_trip=False)
 
         assert result["price"] == 750.0
-        assert len(result["legs"]) == 3
+        assert len(result["segments"]) == 3
 
     def test_multi_city_not_treated_as_round_trip(self):
-        """A 3-leg tuple must not be treated as round-trip even if flag is True."""
+        """A 3-slice tuple must not be treated as round-trip even if flag is True."""
         leg1 = _make_flight(price=0.0, legs=[_make_leg("JFK", "LAX")])
         leg2 = _make_flight(price=0.0, legs=[_make_leg("LAX", "ORD")])
         leg3 = _make_flight(price=900.0, legs=[_make_leg("ORD", "JFK")])
@@ -171,7 +171,7 @@ class TestSerializeFlightResult:
         result = _serialize_flight_result((leg1, leg2, leg3), is_round_trip=True)
 
         assert result["price"] == 900.0
-        assert len(result["legs"]) == 3
+        assert len(result["segments"]) == 3
 
     def test_two_tuple_without_round_trip_uses_outbound_price(self):
         """A 2-element tuple with is_round_trip=False should use outbound price."""
@@ -181,7 +181,7 @@ class TestSerializeFlightResult:
         result = _serialize_flight_result((outbound, return_flight), is_round_trip=False)
 
         assert result["price"] == 350.0
-        assert len(result["legs"]) == 2
+        assert len(result["segments"]) == 2
 
     def test_uses_flight_currency_when_available(self):
         """Serialization should emit the per-result returned currency."""

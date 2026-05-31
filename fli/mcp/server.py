@@ -321,17 +321,17 @@ def _serialize_booking_option(option: Any) -> dict[str, Any]:
     return out
 
 
-def _flight_legs(flight: Any) -> list[Any]:
-    """Flatten a result (or round-trip/multi-city tuple) into its legs."""
+def _flight_segments(flight: Any) -> list[Any]:
+    """Flatten a result (or round-trip/multi-city tuple) into its flight segments."""
     if isinstance(flight, tuple):
-        return [leg for segment in flight for leg in segment.legs]
+        return [flight_segment for segment in flight for flight_segment in segment.legs]
     return list(flight.legs)
 
 
-def _leg_identifiers(leg: Any) -> set[str]:
-    """Return the accepted identifier spellings for a leg ('178' and 'BA178')."""
-    number = str(leg.flight_number).upper().replace(" ", "")
-    code = _airline_code(leg.airline).upper()
+def _segment_identifiers(segment: Any) -> set[str]:
+    """Return the accepted identifier spellings for a segment ('178' and 'BA178')."""
+    number = str(segment.flight_number).upper().replace(" ", "")
+    code = _airline_code(segment.airline).upper()
     # Strip a leading airline-code prefix if the flight_number already carries
     # it (e.g. "BA178" -> "178") so the bare and prefixed forms are always both
     # valid and we never produce a double-prefixed token ("BABA178").
@@ -351,44 +351,44 @@ def _match_flight(flights: list[Any], flight_numbers: list[str] | None) -> Any |
         return flights[0] if flights else None
     want = [fn.upper().replace(" ", "") for fn in flight_numbers]
     for flight in flights:
-        legs = _flight_legs(flight)
-        if len(legs) != len(want):
+        segments = _flight_segments(flight)
+        if len(segments) != len(want):
             continue
-        if all(token in _leg_identifiers(leg) for token, leg in zip(want, legs, strict=True)):
+        if all(token in _segment_identifiers(segment) for token, segment in zip(want, segments, strict=True)):
             return flight
     return None
 
 
 def _flight_idents(flight: Any) -> list[str]:
-    """Human-readable airline+number labels for each leg of a result."""
-    return [f"{_airline_code(leg.airline)}{leg.flight_number}" for leg in _flight_legs(flight)]
+    """Human-readable airline+number labels for each segment of a result."""
+    return [f"{_airline_code(segment.airline)}{segment.flight_number}" for segment in _flight_segments(flight)]
 
 
-def _serialize_flight_leg(leg: Any) -> dict[str, Any]:
-    """Serialize a single flight leg to a dictionary."""
+def _serialize_flight_segment(segment: Any) -> dict[str, Any]:
+    """Serialize a single flight segment to a dictionary."""
     out: dict[str, Any] = {
-        "departure_airport": leg.departure_airport,
-        "arrival_airport": leg.arrival_airport,
-        "departure_time": leg.departure_datetime,
-        "arrival_time": leg.arrival_datetime,
-        "duration": leg.duration,
-        "airline": leg.airline,
-        "airline_code": _airline_code(leg.airline),
-        "flight_number": leg.flight_number,
+        "departure_airport": segment.departure_airport,
+        "arrival_airport": segment.arrival_airport,
+        "departure_time": segment.departure_datetime,
+        "arrival_time": segment.arrival_datetime,
+        "duration": segment.duration,
+        "airline": segment.airline,
+        "airline_code": _airline_code(segment.airline),
+        "flight_number": segment.flight_number,
     }
-    if getattr(leg, "departure_airport_name", None):
-        out["departure_airport_name"] = leg.departure_airport_name
-    if getattr(leg, "arrival_airport_name", None):
-        out["arrival_airport_name"] = leg.arrival_airport_name
-    if getattr(leg, "operating_airline", None):
-        out["operating_airline"] = _airline_code(leg.operating_airline)
-    if getattr(leg, "aircraft", None):
-        out["aircraft"] = leg.aircraft
-    if getattr(leg, "legroom", None):
-        out["legroom"] = leg.legroom
-    if getattr(leg, "overnight", False):
+    if getattr(segment, "departure_airport_name", None):
+        out["departure_airport_name"] = segment.departure_airport_name
+    if getattr(segment, "arrival_airport_name", None):
+        out["arrival_airport_name"] = segment.arrival_airport_name
+    if getattr(segment, "operating_airline", None):
+        out["operating_airline"] = _airline_code(segment.operating_airline)
+    if getattr(segment, "aircraft", None):
+        out["aircraft"] = segment.aircraft
+    if getattr(segment, "legroom", None):
+        out["legroom"] = segment.legroom
+    if getattr(segment, "overnight", False):
         out["overnight"] = True
-    amenities = getattr(leg, "amenities", None)
+    amenities = getattr(segment, "amenities", None)
     if amenities is not None:
         a = amenities.model_dump(exclude_none=True)
         if a:
@@ -444,7 +444,7 @@ def _serialize_flight_result(
         out = {
             "price": flight.price,
             "currency": flight.currency or CONFIG.default_currency,
-            "legs": [_serialize_flight_leg(leg) for leg in flight.legs],
+            "segments": [_serialize_flight_segment(segment) for segment in flight.legs],
         }
         out.update(_flight_extras(flight))
         if booking_url:
@@ -459,9 +459,9 @@ def _serialize_flight_result(
         out = {
             "price": outbound.price,
             "currency": outbound.currency or CONFIG.default_currency,
-            "legs": [
-                *[_serialize_flight_leg(leg) for leg in outbound.legs],
-                *[_serialize_flight_leg(leg) for leg in return_flight.legs],
+            "segments": [
+                *[_serialize_flight_segment(segment) for segment in outbound.legs],
+                *[_serialize_flight_segment(segment) for segment in return_flight.legs],
             ],
         }
         out.update(_flight_extras(outbound))
@@ -478,7 +478,7 @@ def _serialize_flight_result(
     out = {
         "price": price_segment.price,
         "currency": price_segment.currency or CONFIG.default_currency,
-        "legs": [_serialize_flight_leg(leg) for segment in segments for leg in segment.legs],
+        "segments": [_serialize_flight_segment(flight_segment) for segment in segments for flight_segment in segment.legs],
     }
     out.update(_flight_extras(price_segment))
     if booking_url:
