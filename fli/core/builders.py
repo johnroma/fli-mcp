@@ -110,7 +110,11 @@ def build_flight_segments(
                 departure_airport=[[apt, 0] for apt in destinations],
                 arrival_airport=[[apt, 0] for apt in origins],
                 travel_date=return_date,
-                time_restrictions=time_restrictions,
+                # Don't apply the outbound departure window to the return leg —
+                # it's derived from the outbound UTC hour and the return origin
+                # is usually in a different timezone, so the window would exclude
+                # valid return flights (e.g. Réunion UTC+4 vs Stockholm UTC+2).
+                time_restrictions=None,
             )
         )
 

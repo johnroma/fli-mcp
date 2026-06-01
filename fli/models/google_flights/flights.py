@@ -180,12 +180,18 @@ class FlightSearchFilters(BaseModel):
             is_return = self.trip_type == TripType.ROUND_TRIP and seg_idx > 0
             classifier = 1 if is_return else 3
 
+            # For round-trip return segments, skip the airline include filter.
+            # Applying it to the return leg causes Google Flights to return 0
+            # results for many routes (empirically confirmed on ARN↔RUN);
+            # the outbound filter already constrains the itinerary sufficiently.
+            effective_airlines_filters = None if is_return else airlines_filters
+
             segment_formatted = [
                 segment_filters[0],  # 0: departure airport
                 segment_filters[1],  # 1: arrival airport
                 time_filters,  # 2: time restrictions [edep, ldep, earr, larr]
                 serialize(self.stops.value),  # 3: stops int
-                airlines_filters,  # 4: airline / alliance INCLUDE list
+                effective_airlines_filters,  # 4: airline / alliance INCLUDE list
                 exclude_filters,  # 5: airline / alliance EXCLUDE list
                 segment.travel_date,  # 6: travel date
                 [self.max_duration] if self.max_duration else None,  # 7: max duration
