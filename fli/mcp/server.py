@@ -844,6 +844,7 @@ def _execute_date_search(params: DateSearchParams) -> dict[str, Any]:
                 "count": 0,
                 "trip_type": trip_type.name,
                 "date_range": f"{params.start_date} to {params.end_date}",
+                "duration": params.trip_duration if params.is_round_trip else None,
             }
 
         if params.sort_by_price:

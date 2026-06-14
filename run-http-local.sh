@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-FLI_ENV="${FLI_ENV:-/Users/john/www/fli/env-profiles/local.env}"
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+WORKSPACE_DIR="$(cd -- "$SCRIPT_DIR/.." && pwd)"
+FLI_ENV="${FLI_ENV:-$WORKSPACE_DIR/env-profiles/local.env}"
 
 env_value() {
   local key="$1"
@@ -25,4 +27,5 @@ export PORT="${FLI_MCP_PORT:-$(env_value FLI_MCP_PORT)}"
 export HOST="${HOST:-127.0.0.1}"
 export PORT="${PORT:-8000}"
 
-exec /Users/john/www/fli/fli-mcp/.venv/bin/fli-mcp-http
+cd "$SCRIPT_DIR"
+exec "$SCRIPT_DIR/.venv/bin/python" -c "from fli.mcp._entry import run_http; run_http()"
