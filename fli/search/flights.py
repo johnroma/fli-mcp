@@ -96,7 +96,7 @@ class SearchFlights:
     def search(
         self,
         filters: FlightSearchFilters,
-        top_n: int = 5,
+        top_n: int = 2,
         currency: str | None = None,
         language: str | None = None,
         country: str | None = None,
@@ -459,10 +459,9 @@ class SearchFlights:
         Each ``outbound`` candidate triggers an independent follow-up
         ``GetShoppingResults`` call to enumerate the next leg. Those
         requests share no state, so we issue them in parallel through the
-        shared rate-limited executor. With ``top_n=5`` and Google's 10
-        req/sec ceiling, all five requests start within ~100ms and the
-        bottleneck becomes the network round trip rather than serial
-        request scheduling.
+        shared rate-limited executor. With ``top_n=2`` and Google's 10
+        req/sec ceiling, the requests are paced out to avoid triggering
+        per-IP rate limits while still exploring multiple return options.
 
         Each worker calls :meth:`_fetch_flights` directly (not
         :meth:`search`) with ``capture_session=False`` so the parallel
