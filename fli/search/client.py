@@ -24,7 +24,7 @@ import os
 import threading
 from typing import TYPE_CHECKING, Any
 
-from tenacity import retry, stop_after_attempt, wait_exponential
+from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
 from fli.search._concurrency import TokenBucketRateLimiter
 from fli.search.exceptions import (
@@ -71,6 +71,22 @@ if _env_timeout is not None:
         raise ValueError(f"FLI_TIMEOUT must be a positive number, got: {_env_timeout!r}")
 else:
     REQUEST_TIMEOUT = DEFAULT_TIMEOUT
+
+
+def _is_retryable(exc: BaseException) -> bool:
+    """Decide whether a failed request is worth retrying.
+
+    Retrying a rate-limit / client error is actively harmful: a 429 means
+    Google is already shedding our load, so firing the same request two
+    more times only deepens the per-IP cooldown (and triples the request
+    count behind every user-visible search). We therefore retry *only*
+    transient failures — timeouts, connection drops, and 5xx server errors
+    — and surface 4xx (including 429) immediately.
+    """
+    if isinstance(exc, SearchHTTPError):
+        status = exc.status_code
+        return status is not None and status >= 500
+    return isinstance(exc, (SearchTimeoutError, SearchConnectionError))
 
 
 class Client:
@@ -122,7 +138,12 @@ class Client:
     # Request entry points
     # ------------------------------------------------------------------
 
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(), reraise=True)
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(),
+        retry=retry_if_exception(_is_retryable),
+        reraise=True,
+    )
     def get(self, url: str, **kwargs: Any) -> Response:
         """Make a rate-limited GET request with automatic retries."""
         self._rate_limiter.acquire()
@@ -134,7 +155,12 @@ class Client:
         except Exception as e:
             raise _wrap_request_error("GET", url, e) from e
 
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(), reraise=True)
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(),
+        retry=retry_if_exception(_is_retryable),
+        reraise=True,
+    )
     def post(self, url: str, **kwargs: Any) -> Response:
         """Make a rate-limited POST request with automatic retries."""
         self._rate_limiter.acquire()
@@ -177,17 +203,61 @@ def _wrap_request_error(method: str, url: str, exc: BaseException) -> SearchClie
             "Check your internet connection or DNS and try again."
         )
     if isinstance(exc, curl_exc.HTTPError):
-        status = getattr(getattr(exc, "response", None), "status_code", None)
-        suffix = f" (HTTP {status})" if status else ""
+        response = getattr(exc, "response", None)
+        status = getattr(response, "status_code", None)
         return SearchHTTPError(
-            f"Google Flights returned an error response{suffix}. "
-            "The request may be malformed, rate-limited, or blocked.",
+            _describe_http_error(status, response),
             status_code=status,
         )
     # Anything else (including bare CurlError) — keep a clean message but
     # preserve the original via ``__cause__`` so logs still show details.
     return SearchClientError(
         f"{method} request to Google Flights ({host}) failed: {exc.__class__.__name__}"
+    )
+
+
+def _visible_text(body: str, limit: int = 240) -> str:
+    """Strip HTML tags/scripts and collapse whitespace for a readable snippet."""
+    import re
+
+    # Drop <script>/<style> blocks wholesale, then remaining tags.
+    body = re.sub(r"(?is)<(script|style)[^>]*>.*?</\1>", " ", body)
+    body = re.sub(r"(?s)<[^>]+>", " ", body)
+    body = re.sub(r"\s+", " ", body).strip()
+    return body[:limit]
+
+
+def _describe_http_error(status: int | None, response: object) -> str:
+    """Build a message that forwards Google's actual error, not a generic 429.
+
+    Google's anti-bot system answers with an HTML CAPTCHA interstitial
+    ("Our systems have detected unusual traffic …") under an HTTP 429.
+    Collapsing that to "rate-limited, or blocked" hides the real cause and
+    the recovery path, so we detect it explicitly and otherwise forward a
+    readable snippet of whatever body Google returned.
+    """
+    suffix = f" (HTTP {status})" if status else ""
+    body = ""
+    try:
+        body = getattr(response, "text", "") or ""
+    except Exception:  # noqa: BLE001 — never let error formatting fail the path
+        body = ""
+
+    low = body.lower()
+    if "unusual traffic" in low or "captcha" in low or "/sorry/" in low:
+        return (
+            f"Google Flights blocked the request as automated traffic{suffix}: it "
+            "served a CAPTCHA 'unusual traffic from your computer network' page. "
+            "The block expires shortly after requests stop - reduce request volume "
+            "and parallelism, then wait before retrying."
+        )
+
+    snippet = _visible_text(body)
+    if snippet:
+        return f"Google Flights returned an error response{suffix}: {snippet}"
+    return (
+        f"Google Flights returned an error response{suffix}. "
+        "The request may be malformed, rate-limited, or blocked."
     )
 
 
