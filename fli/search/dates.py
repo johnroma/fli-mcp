@@ -16,7 +16,12 @@ from fli.models import DateSearchFilters
 from fli.models.google_flights.base import TripType
 from fli.search._concurrency import parallel_map
 from fli.search._urls import with_locale_params
-from fli.search._wire import parse_first_wrb_payload
+from fli.search._wire import (
+    describe_response_error,
+    find_response_error,
+    parse_first_wrb_payload,
+)
+from fli.search.flights import SearchParseError
 from fli.search.client import get_client
 
 logger = logging.getLogger(__name__)
@@ -184,6 +189,12 @@ class SearchDates:
 
         data = parse_first_wrb_payload(response.text)
         if data is None:
+            # As with flight search, a null payload can be an HTTP 200 error
+            # envelope (anti-abuse throttle) rather than a genuinely empty
+            # calendar — surface it instead of reporting "no dates".
+            error = find_response_error(response.text)
+            if error is not None:
+                raise SearchParseError(describe_response_error(*error))
             return None
 
         try:

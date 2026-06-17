@@ -242,6 +242,10 @@ def _describe_http_error(status: int | None, response: object) -> str:
         body = getattr(response, "text", "") or ""
     except Exception:  # noqa: BLE001 — never let error formatting fail the path
         body = ""
+    # ``response.text`` is normally a str, but defend against mocks / odd
+    # client types so error formatting never raises on a non-string body.
+    if not isinstance(body, str):
+        body = ""
 
     low = body.lower()
     if "unusual traffic" in low or "captcha" in low or "/sorry/" in low:

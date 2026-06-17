@@ -27,7 +27,12 @@ from fli.search._decoders import (
 )
 from fli.search._urls import with_locale_params
 from fli.search._urls import with_locale_params as _with_locale_params  # noqa: F401
-from fli.search._wire import iter_wrb_chunks, parse_first_wrb_payload
+from fli.search._wire import (
+    describe_response_error,
+    find_response_error,
+    iter_wrb_chunks,
+    parse_first_wrb_payload,
+)
 from fli.search.client import get_client
 
 logger = logging.getLogger(__name__)
@@ -173,6 +178,14 @@ class SearchFlights:
 
         inner = parse_first_wrb_payload(response.text)
         if inner is None:
+            # A null inner payload can mean "no flights matched" — but it can
+            # also mean Google answered HTTP 200 with an error envelope
+            # (anti-abuse throttling returns code 13 / INTERNAL). Surface that
+            # explicitly so callers don't mistake a rejection for an empty
+            # result set.
+            error = find_response_error(response.text)
+            if error is not None:
+                raise SearchParseError(describe_response_error(*error))
             return None
 
         if capture_session:
