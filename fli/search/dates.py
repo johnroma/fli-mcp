@@ -176,6 +176,7 @@ class SearchDates:
             Exception: If the search fails or returns invalid data
 
         """
+        self.client.clear_cookies()
         encoded_filters = filters.encode()
         url = with_locale_params(self.BASE_URL, currency, language, country)
 

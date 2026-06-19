@@ -6,9 +6,13 @@ travel dates.
 """
 
 import json
+import logging
 import os
+import sys
 from datetime import datetime, timedelta, timezone
 from typing import Annotated, Any
+
+logger = logging.getLogger(__name__)
 
 from fastmcp import FastMCP
 from mcp.types import Icon
@@ -671,8 +675,10 @@ def _execute_flight_search(params: FlightSearchParams) -> dict[str, Any]:
         }
 
     except ParseError as e:
+        logger.error("ParseError in flight search: %s", e)
         return {"success": False, "error": str(e), "flights": []}
     except Exception as e:
+        logger.exception("Unhandled exception in flight search")
         error_msg = str(e)
         if "validation error" in error_msg.lower():
             return {"success": False, "error": "Invalid parameter value", "flights": []}
@@ -1453,6 +1459,22 @@ def run():
     mcp.run(transport="stdio")
 
 
+def _configure_logging() -> None:
+    """Set up stderr logging for the HTTP server process."""
+    logging.basicConfig(
+        level=logging.DEBUG,
+        stream=sys.stderr,
+        format="%(asctime)s %(levelname)-8s %(name)s: %(message)s",
+        datefmt="%H:%M:%S",
+    )
+    # curl_cffi and httpcore are very noisy at DEBUG — keep them quieter
+    logging.getLogger("curl_cffi").setLevel(logging.WARNING)
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
+    logging.getLogger("fastmcp").setLevel(logging.INFO)
+    logging.getLogger("mcp").setLevel(logging.INFO)
+
+
 def run_http(host: str = "0.0.0.0", port: int = 8000) -> None:
     """Run the MCP server over HTTP (streamable).
 
@@ -1461,12 +1483,15 @@ def run_http(host: str = "0.0.0.0", port: int = 8000) -> None:
     exposes the server on every network interface — set ``HOST=127.0.0.1`` to
     restrict it to loopback.
     """
+    _configure_logging()
+
     env_host = os.getenv("HOST")
     env_port = os.getenv("PORT")
 
     bind_host = env_host if env_host else host
     bind_port = int(env_port) if env_port else port
 
+    logger.info("Starting fli-mcp HTTP server on %s:%s", bind_host, bind_port)
     mcp.run(transport="http", host=bind_host, port=bind_port)
 
 

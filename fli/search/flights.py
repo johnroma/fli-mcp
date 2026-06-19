@@ -165,8 +165,17 @@ class SearchFlights:
         because the user-visible session id should describe the original
         shopping query, not whichever expansion completed last.
         """
+        # Clear accumulated Google cookies before every search. The long-running
+        # MCP server reuses a curl_cffi Session per thread; cookies from prior
+        # responses accumulate and eventually trigger Google's anti-abuse layer
+        # (status 13 INTERNAL in the wrb.fr envelope). Starting each search
+        # with a clean cookie jar is the simplest and most reliable mitigation.
+        self.client.clear_cookies()
+
         encoded = filters.encode()
         url = with_locale_params(self.BASE_URL, currency, language, country)
+
+        logger.debug("GET_SHOPPING_RESULTS url=%s f.req=%s...", url, encoded[:120])
 
         response = self.client.post(
             url=url,
@@ -176,16 +185,28 @@ class SearchFlights:
         )
         response.raise_for_status()
 
+        logger.debug(
+            "Google response status=%s content-type=%s body_len=%s body_head=%.300s",
+            response.status_code,
+            response.headers.get("content-type", "?"),
+            len(response.text),
+            response.text[:300],
+        )
+
         inner = parse_first_wrb_payload(response.text)
         if inner is None:
             # A null inner payload can mean "no flights matched" — but it can
-            # also mean Google answered HTTP 200 with an error envelope
-            # (anti-abuse throttling returns code 13 / INTERNAL). Surface that
-            # explicitly so callers don't mistake a rejection for an empty
-            # result set.
+            # also mean Google answered HTTP 200 with an error envelope.
             error = find_response_error(response.text)
             if error is not None:
+                logger.error(
+                    "Google error envelope detected (code=%s type=%s). Full body (first 4000 chars):\n%s",
+                    error[0],
+                    error[1],
+                    response.text[:4000],
+                )
                 raise SearchParseError(describe_response_error(*error))
+            logger.debug("No inner payload and no error envelope — Google returned empty results")
             return None
 
         if capture_session:

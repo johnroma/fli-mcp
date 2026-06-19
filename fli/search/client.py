@@ -20,9 +20,12 @@ callers cooperate cleanly under Google's 10 req/sec ceiling.
 
 from __future__ import annotations
 
+import logging
 import os
 import threading
 from typing import TYPE_CHECKING, Any
+
+logger = logging.getLogger(__name__)
 
 from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
@@ -125,6 +128,22 @@ class Client:
             self._sessions.session = session
         return session
 
+    def clear_cookies(self) -> None:
+        """Clear accumulated cookies on this thread's session.
+
+        Google sets tracking cookies on every response. When those cookies
+        accumulate across requests inside a long-running MCP server process,
+        Google's anti-abuse layer starts returning RPC status 13 (INTERNAL)
+        in the wrb.fr envelope — even on otherwise valid requests. Clearing
+        the cookie jar before each top-level search prevents this buildup.
+        """
+        session = getattr(self._sessions, "session", None)
+        if session is not None:
+            n = len(session.cookies)
+            session.cookies.clear()
+            if n:
+                logger.debug("Cleared %d accumulated Google cookies from session", n)
+
     def __del__(self):
         """Best-effort cleanup of the main-thread session (others die with their thread)."""
         session = getattr(self._sessions, "session", None) if hasattr(self, "_sessions") else None
@@ -165,11 +184,15 @@ class Client:
         """Make a rate-limited POST request with automatic retries."""
         self._rate_limiter.acquire()
         kwargs.setdefault("timeout", REQUEST_TIMEOUT)
+        impersonate = kwargs.get("impersonate", "none")
+        logger.debug("POST %s (impersonate=%s)", url, impersonate)
         try:
             response = self._session().post(url, **kwargs)
+            logger.debug("POST %s -> HTTP %s", url, response.status_code)
             response.raise_for_status()
             return response
         except Exception as e:
+            logger.debug("POST %s raised %s: %s", url, type(e).__name__, e)
             raise _wrap_request_error("POST", url, e) from e
 
 
