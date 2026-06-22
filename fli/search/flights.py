@@ -254,7 +254,8 @@ class SearchFlights:
             error = find_response_error(response.text)
             if error is not None:
                 logger.error(
-                    "Google error envelope detected (code=%s type=%s). Full body (first 4000 chars):\n%s",
+                    "Google error envelope detected (code=%s type=%s)."
+                    " Full body (first 4000 chars):\n%s",
                     error[0],
                     error[1],
                     response.text[:4000],

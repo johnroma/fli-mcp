@@ -25,8 +25,6 @@ import os
 import threading
 from typing import TYPE_CHECKING, Any
 
-logger = logging.getLogger(__name__)
-
 from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
 from fli.search._concurrency import TokenBucketRateLimiter
@@ -36,6 +34,8 @@ from fli.search.exceptions import (
     SearchHTTPError,
     SearchTimeoutError,
 )
+
+logger = logging.getLogger(__name__)
 
 # ``curl_cffi`` adds ~100ms to import time on first load — we only need
 # it once an HTTP request actually fires, so import lazily on first use.
@@ -89,7 +89,7 @@ def _is_retryable(exc: BaseException) -> bool:
     if isinstance(exc, SearchHTTPError):
         status = exc.status_code
         return status is not None and status >= 500
-    return isinstance(exc, (SearchTimeoutError, SearchConnectionError))
+    return isinstance(exc, SearchTimeoutError | SearchConnectionError)
 
 
 class Client:
