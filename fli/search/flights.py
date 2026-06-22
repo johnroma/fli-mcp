@@ -146,6 +146,60 @@ class SearchFlights:
             country=country,
         )
 
+    def search_priced_returns(
+        self,
+        filters: FlightSearchFilters,
+        outbound: FlightResult,
+        *,
+        currency: str | None = None,
+        language: str | None = None,
+        country: str | None = None,
+    ) -> list[FlightResult] | None:
+        """Price the return legs for a *known* outbound in a single request.
+
+        This is the verification counterpart to :meth:`search`. Where
+        :meth:`search` shops for outbound options and then fans out —
+        :meth:`_expand_multi_leg` issues one ``GetShoppingResults`` per
+        candidate outbound, so a round-trip becomes ``1 + top_n`` parallel
+        requests — this method takes the exact outbound the caller already
+        holds, pins it on segment 0, and issues **exactly one** request. The
+        response is the set of available return legs, each priced as the full
+        round-trip total for ``(outbound, return)``.
+
+        Use it when you only need to verify/price a specific itinerary rather
+        than browse alternatives: one request instead of a fan-out keeps the
+        source IP well clear of Google's anti-abuse throttle.
+
+        Args:
+            filters: A ``ROUND_TRIP`` filter for the route/dates. Its
+                ``flight_segments[0].selected_flight`` is set internally on a
+                copy; the caller's object is not mutated.
+            outbound: The outbound itinerary to pin (its ``legs`` carry the
+                airports / dates / airline / flight numbers Google needs).
+            currency: Optional ISO 4217 currency code (``curr`` URL param).
+            language: Optional BCP-47 language code (``hl`` URL param).
+            country: Optional ISO 3166-1 alpha-2 country code (``gl`` URL param).
+
+        Returns:
+            The return-leg :class:`FlightResult`s (``price`` = round-trip total
+            for that pairing), or ``None`` when Google returns no return legs.
+
+        Raises:
+            ValueError: ``filters.trip_type`` is not ``ROUND_TRIP``.
+
+        """
+        if filters.trip_type != TripType.ROUND_TRIP:
+            raise ValueError("search_priced_returns requires a ROUND_TRIP filter")
+        pinned = deepcopy(filters)
+        pinned.flight_segments[0].selected_flight = outbound
+        return self._fetch_flights(
+            pinned,
+            currency=currency,
+            language=language,
+            country=country,
+            capture_session=True,
+        )
+
     def _fetch_flights(
         self,
         filters: FlightSearchFilters,

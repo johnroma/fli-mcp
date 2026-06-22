@@ -42,11 +42,12 @@ FIXTURE_DIR = Path(__file__).parent / "fixtures"
 
 
 class _FakeResponse:
-    __slots__ = ("text", "status_code")
+    __slots__ = ("text", "status_code", "headers")
 
     def __init__(self, text: str):
         self.text = text
         self.status_code = 200
+        self.headers = {"content-type": "application/json"}
 
     def raise_for_status(self) -> None:
         return None
@@ -76,6 +77,10 @@ class FakeClient:
             with self._lock:
                 self._in_flight -= 1
         return _FakeResponse(self._fixture)
+
+    def clear_cookies(self) -> None:
+        """No-op: the real client clears its cookie jar before each search."""
+        return None
 
     def post(self, url: str, **kwargs: Any) -> _FakeResponse:
         return self._do()

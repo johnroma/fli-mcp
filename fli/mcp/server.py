@@ -36,9 +36,12 @@ from fli.core import (
 )
 from fli.core.parsers import ParseError
 from fli.models import (
+    Airline,
     Airport,
     BagsFilter,
     DateSearchFilters,
+    FlightLeg,
+    FlightResult,
     FlightSearchFilters,
     PassengerInfo,
     TripType,
@@ -1032,6 +1035,265 @@ def search_flights(
 def _search_flights_from_params(params: FlightSearchParams) -> dict[str, Any]:
     """Entry point for tests that call the tool via a params object."""
     return _execute_flight_search(params)
+
+
+# =============================================================================
+# Verify a specific round-trip itinerary (single request, no fan-out)
+# =============================================================================
+
+
+class ItineraryLeg(BaseModel):
+    """One flight leg of a known itinerary to price."""
+
+    airline: str = Field(description="Airline IATA code, e.g. 'SK'")
+    flight_number: str = Field(
+        description="Flight number, with or without the airline prefix (e.g. 'SK2541' or '2541')"
+    )
+    origin: str = Field(description="Leg origin airport IATA code")
+    destination: str = Field(description="Leg destination airport IATA code")
+    departure: str = Field(
+        description="Local departure datetime, ISO 8601 (e.g. '2026-07-08T06:50:00')"
+    )
+    arrival: str | None = Field(None, description="Local arrival datetime, ISO 8601 (optional)")
+
+
+def _airline_from_code(code: str) -> Airline:
+    """Resolve an IATA airline code to an :class:`Airline` enum member."""
+    name = code.strip().upper()
+    if name and name[0].isdigit():
+        name = f"_{name}"
+    try:
+        return Airline[name]
+    except KeyError as e:
+        raise ParseError(f"Unknown airline code: {code!r}") from e
+
+
+def _itinerary_to_result(legs: list[ItineraryLeg]) -> FlightResult:
+    """Build a minimal :class:`FlightResult` from known leg data (no network).
+
+    Only the fields the request encoder reads from a pinned
+    ``selected_flight`` — airports, departure date, airline, flight number —
+    need to be accurate; the rest just satisfy the model's required fields.
+    """
+    if not legs:
+        raise ParseError("itinerary must have at least one leg")
+    flight_legs: list[FlightLeg] = []
+    for leg in legs:
+        airline = _airline_from_code(leg.airline)
+        number = leg.flight_number.strip().upper().replace(" ", "")
+        prefix = airline.name.lstrip("_")
+        if prefix and number.startswith(prefix):
+            number = number[len(prefix) :]
+        try:
+            dep = datetime.fromisoformat(leg.departure)
+        except ValueError as e:
+            raise ParseError(f"Invalid departure datetime: {leg.departure!r}") from e
+        arr = dep
+        if leg.arrival:
+            try:
+                arr = datetime.fromisoformat(leg.arrival)
+            except ValueError as e:
+                raise ParseError(f"Invalid arrival datetime: {leg.arrival!r}") from e
+        flight_legs.append(
+            FlightLeg(
+                airline=airline,
+                flight_number=number,
+                departure_airport=resolve_airport(leg.origin),
+                arrival_airport=resolve_airport(leg.destination),
+                departure_datetime=dep,
+                arrival_datetime=arr,
+                duration=max(int((arr - dep).total_seconds() // 60), 0),
+            )
+        )
+    span = flight_legs[-1].arrival_datetime - flight_legs[0].departure_datetime
+    return FlightResult(
+        legs=flight_legs,
+        duration=max(int(span.total_seconds() // 60), 0),
+        stops=max(len(flight_legs) - 1, 0),
+    )
+
+
+def _result_flight_codes(result: FlightResult) -> set[str]:
+    """Flight-number identifiers for a result's legs (number and AL+number)."""
+    codes: set[str] = set()
+    for leg in result.legs:
+        number = (leg.flight_number or "").upper().replace(" ", "")
+        if not number:
+            continue
+        codes.add(number)
+        airline = leg.airline.name.lstrip("_") if leg.airline else ""
+        if airline:
+            codes.add(f"{airline}{number}")
+    return codes
+
+
+def _execute_verify_round_trip(
+    outbound_legs: list[ItineraryLeg],
+    return_date: str,
+    return_flight_numbers: list[str] | None,
+    cabin_class: str,
+    currency: str | None,
+    language: str | None,
+    country: str | None,
+) -> dict[str, Any]:
+    """Price a specific round-trip in one request by pinning the outbound."""
+    try:
+        outbound = _itinerary_to_result(outbound_legs)
+        origin = outbound.legs[0].departure_airport
+        destination = outbound.legs[-1].arrival_airport
+        departure_date = outbound.legs[0].departure_datetime.date().isoformat()
+
+        segments, trip_type = build_flight_segments(
+            origin=[origin],
+            destination=[destination],
+            departure_date=departure_date,
+            return_date=return_date,
+            time_restrictions=None,
+        )
+        # Constrain only the outbound to the pinned itinerary's carrier(s); the
+        # encoder drops airline filters on the return segment anyway.
+        carriers = sorted(
+            {leg.airline for leg in outbound.legs if leg.airline},
+            key=lambda a: a.value,
+        )
+        filters = FlightSearchFilters(
+            trip_type=trip_type,
+            passenger_info=PassengerInfo(adults=1),
+            flight_segments=segments,
+            stops=parse_max_stops("ANY"),
+            seat_type=parse_cabin_class(cabin_class),
+            airlines=carriers or None,
+            sort_by=parse_sort_by("CHEAPEST"),
+            show_all_results=True,
+        )
+
+        currency_code = parse_currency(currency)
+        client = SearchFlights()
+        returns = client.search_priced_returns(
+            filters,
+            outbound,
+            currency=currency_code,
+            language=language,
+            country=country,
+        )
+
+        booking_url = _google_flights_url(
+            [origin], [destination], departure_date, return_date, currency, language, country
+        )
+        if not returns:
+            return {
+                "success": True,
+                "flights": [],
+                "count": 0,
+                "trip_type": "ROUND_TRIP",
+                "booking_url": booking_url,
+            }
+
+        wanted: set[str] | None = None
+        if return_flight_numbers:
+            wanted = {n.upper().replace(" ", "") for n in return_flight_numbers}
+
+        out_segments = [_serialize_flight_segment(leg) for leg in outbound.legs]
+        results: list[dict[str, Any]] = []
+        for ret in returns:
+            if wanted is not None and not (_result_flight_codes(ret) & wanted):
+                continue
+            item: dict[str, Any] = {
+                # The round-trip total for THIS pairing lives on the return
+                # leg (the outbound's price is only the "from" headline).
+                "price": ret.price,
+                "currency": ret.currency or CONFIG.default_currency,
+                "segments": out_segments + [_serialize_flight_segment(leg) for leg in ret.legs],
+            }
+            item.update(_flight_extras(outbound))
+            return_extras = _flight_extras(ret)
+            if return_extras:
+                item["return_flight"] = return_extras
+            results.append(item)
+
+        if CONFIG.max_results:
+            results = results[: CONFIG.max_results]
+
+        return {
+            "success": True,
+            "flights": results,
+            "count": len(results),
+            "trip_type": "ROUND_TRIP",
+            "booking_url": booking_url,
+        }
+
+    except ParseError as e:
+        logger.error("ParseError in verify_round_trip: %s", e)
+        return {"success": False, "error": str(e), "flights": []}
+    except Exception as e:
+        logger.exception("Unhandled exception in verify_round_trip")
+        error_msg = str(e)
+        if "validation error" in error_msg.lower():
+            return {"success": False, "error": "Invalid parameter value", "flights": []}
+        return {"success": False, "error": f"Search failed: {error_msg}", "flights": []}
+
+
+@mcp.tool(
+    annotations={
+        "title": "Verify Round Trip",
+        "readOnlyHint": True,
+        "idempotentHint": True,
+    },
+)
+def verify_round_trip(
+    outbound_legs: Annotated[
+        list[ItineraryLeg],
+        Field(description="The known outbound itinerary legs to price, in order."),
+    ],
+    return_date: Annotated[str, Field(description="Return travel date in YYYY-MM-DD format")],
+    return_flight_numbers: Annotated[
+        list[str] | None,
+        Field(
+            description="Only return itineraries whose return legs include these flight "
+            "numbers (e.g. ['SK2542']). Omit to get all priced return options."
+        ),
+    ] = None,
+    cabin_class: Annotated[
+        str,
+        Field(description="Cabin class: ECONOMY, PREMIUM_ECONOMY, BUSINESS, FIRST"),
+    ] = CONFIG.default_cabin_class,
+    currency: Annotated[
+        str | None,
+        Field(description="ISO 4217 currency code (USD, EUR, GBP...). Omitted = Google locale."),
+    ] = None,
+    language: Annotated[
+        str | None,
+        Field(description="Optional BCP-47 language code (e.g., 'en-GB') for the `hl` URL param."),
+    ] = None,
+    country: Annotated[
+        str | None,
+        Field(description="Optional ISO 3166-1 alpha-2 country code (e.g., 'GB')."),
+    ] = None,
+) -> dict[str, Any]:
+    """Price a SPECIFIC round-trip itinerary in a single request.
+
+    Unlike ``search_flights`` — which shops for outbound options and then fans
+    out into one request per candidate to enumerate return legs — this pins the
+    outbound you already know and issues exactly **one** Google request,
+    returning the available return legs each priced as the full round-trip
+    total. Use it to verify or re-price an itinerary you already hold (e.g. a
+    saved trip) without the request fan-out that triggers Google's anti-bot
+    throttle. Pass ``return_flight_numbers`` to get back just your exact pairing.
+
+    The price on each result is the round-trip total for that outbound+return
+    pairing — which can differ from (and undercut) the sum of the two one-way
+    fares, so it is the figure to trust when comparing a round-trip against
+    booking each leg separately.
+    """
+    return _execute_verify_round_trip(
+        outbound_legs,
+        return_date,
+        return_flight_numbers,
+        cabin_class,
+        currency,
+        language,
+        country,
+    )
 
 
 @mcp.tool(

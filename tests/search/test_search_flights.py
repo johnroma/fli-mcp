@@ -280,6 +280,8 @@ class TestSearchParseErrorMessage:
                 {
                     "content": body.encode("utf-8"),
                     "text": body,
+                    "status_code": 200,
+                    "headers": {"content-type": "application/json"},
                     "raise_for_status": lambda self: None,
                 },
             )()

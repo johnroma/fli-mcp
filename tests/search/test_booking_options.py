@@ -300,7 +300,16 @@ class TestGetBookingOptionsSessionCaching:
         body = ")]}'\n\n" + json.dumps(outer)
 
         with patch.object(sf.client, "post") as mock_post:
-            mock_response = type("R", (), {"text": body, "raise_for_status": lambda s: None})()
+            mock_response = type(
+                "R",
+                (),
+                {
+                    "text": body,
+                    "status_code": 200,
+                    "headers": {"content-type": "application/json"},
+                    "raise_for_status": lambda s: None,
+                },
+            )()
             mock_post.return_value = mock_response
             try:
                 sf.search(_round_trip_filters())
