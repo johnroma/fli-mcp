@@ -12,8 +12,6 @@ import sys
 from datetime import datetime, timedelta, timezone
 from typing import Annotated, Any
 
-logger = logging.getLogger(__name__)
-
 from fastmcp import FastMCP
 from mcp.types import Icon
 from pydantic import BaseModel, Field
@@ -47,6 +45,8 @@ from fli.models import (
     TripType,
 )
 from fli.search import SearchDates, SearchFlights
+
+logger = logging.getLogger(__name__)
 
 
 class FlightSearchConfig(BaseSettings):
