@@ -25,8 +25,6 @@ import os
 import threading
 from typing import TYPE_CHECKING, Any
 
-logger = logging.getLogger(__name__)
-
 from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
 from fli.search._concurrency import TokenBucketRateLimiter
@@ -89,7 +87,7 @@ def _is_retryable(exc: BaseException) -> bool:
     if isinstance(exc, SearchHTTPError):
         status = exc.status_code
         return status is not None and status >= 500
-    return isinstance(exc, (SearchTimeoutError, SearchConnectionError))
+    return isinstance(exc, SearchTimeoutError | SearchConnectionError)
 
 
 class Client:
@@ -316,3 +314,6 @@ def get_client() -> Client:
             if client is None:
                 client = Client()
     return client
+
+
+logger = logging.getLogger(__name__)

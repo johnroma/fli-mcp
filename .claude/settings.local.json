@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(gh run *)",
+      "Bash(uv run *)",
+      "Bash(chmod +x *)",
+      "Bash(pnpm biome *)",
+      "Bash(pnpm tsc *)",
+      "Bash(npx tsc *)",
+      "Bash(node_modules/.bin/tsc --noEmit)",
+      "Bash(bash -c \"cd /home/john/projects/saveatrip.workspace/saveatrip && node_modules/.bin/tsc --noEmit\")",
+      "Bash(bash *)",
+      "Bash(git -C /home/john/projects/saveatrip.workspace/saveatrip status)",
+      "Bash(git -C /home/john/projects/saveatrip.workspace/saveatrip log --oneline -5)",
+      "Bash(git *)",
+      "Bash(systemctl --user status saveatrip --no-pager)"
+    ]
+  }
+}
