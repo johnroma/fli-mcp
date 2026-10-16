@@ -21,8 +21,8 @@ from fli.search._wire import (
     find_response_error,
     parse_first_wrb_payload,
 )
-from fli.search.flights import SearchParseError
 from fli.search.client import get_client
+from fli.search.flights import SearchParseError
 
 logger = logging.getLogger(__name__)
 
