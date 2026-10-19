@@ -25,14 +25,69 @@ function asFetch(fn: (input: unknown, init?: RequestInit) => Promise<Response>):
   return fn as unknown as typeof fetch;
 }
 
+/** Restore an environment entry without leaking changes between tests. */
+function restoreEnv(env: NodeJS.ProcessEnv, name: string, value: string | undefined): void {
+  if (value === undefined) delete env[name];
+  else env[name] = value;
+}
+
+describe("environment restoration", () => {
+  test("restoring an absent timeout lets the next Client use its default", () => {
+    const previous = process.env.FLI_TIMEOUT;
+    const env = new Proxy(process.env, {
+      set(target, key, value) {
+        return Reflect.set(target, key, String(value));
+      },
+    });
+    try {
+      delete process.env.FLI_TIMEOUT;
+      env.FLI_TIMEOUT = "5";
+      restoreEnv(env, "FLI_TIMEOUT", undefined);
+      expect(() => new Client()).not.toThrow();
+    } finally {
+      if (previous === undefined) delete process.env.FLI_TIMEOUT;
+      else process.env.FLI_TIMEOUT = previous;
+    }
+  });
+
+  for (const name of ["FLI_TIMEOUT", "HTTPS_PROXY"]) {
+    test(`${name}: restores absence even when assignments stringify undefined`, () => {
+      // Model Node-style process.env coercion, regardless of Bun's host behavior.
+      const env = new Proxy<NodeJS.ProcessEnv>(
+        {},
+        {
+          set(target, key, value) {
+            return Reflect.set(target, key, String(value));
+          },
+        },
+      );
+      env[name] = "temporary";
+      restoreEnv(env, name, undefined);
+      expect(env[name]).toBeUndefined();
+      expect(Object.hasOwn(env, name)).toBe(false);
+    });
+
+    test(`${name}: restores an existing value`, () => {
+      const env: NodeJS.ProcessEnv = { [name]: "original" };
+      const previous = env[name];
+      env[name] = "temporary";
+      restoreEnv(env, name, previous);
+      expect(env[name]).toBe("original");
+    });
+  }
+});
+
 describe("Client", () => {
   let originalEnv: typeof process.env.FLI_TIMEOUT;
+  let originalProxy: typeof process.env.HTTPS_PROXY;
 
   beforeEach(() => {
     originalEnv = process.env.FLI_TIMEOUT;
+    originalProxy = process.env.HTTPS_PROXY;
   });
   afterEach(() => {
-    process.env.FLI_TIMEOUT = originalEnv;
+    restoreEnv(process.env, "FLI_TIMEOUT", originalEnv);
+    restoreEnv(process.env, "HTTPS_PROXY", originalProxy);
   });
 
   test("POST with body sends the expected request", async () => {
@@ -227,8 +282,7 @@ describe("Client", () => {
       await c.post("https://example.com", { body: "" });
       expect(captured.init?.proxy).toBe("http://proxy.example.com:8080");
     } finally {
-      if (previous == null) process.env.HTTPS_PROXY = undefined;
-      else process.env.HTTPS_PROXY = previous;
+      restoreEnv(process.env, "HTTPS_PROXY", previous);
     }
   });
 
@@ -247,7 +301,7 @@ describe("Client", () => {
       await c.post("https://example.com", { body: "" });
       expect(captured.init?.proxy).toBe("http://right.example.com");
     } finally {
-      process.env.HTTPS_PROXY = undefined;
+      restoreEnv(process.env, "HTTPS_PROXY", originalProxy);
     }
   });
 
@@ -259,6 +313,11 @@ describe("Client", () => {
   test("negative FLI_TIMEOUT throws on construction", () => {
     process.env.FLI_TIMEOUT = "-5";
     expect(() => new Client()).toThrow(/FLI_TIMEOUT/);
+  });
+
+  test("literal undefined FLI_TIMEOUT remains invalid", () => {
+    process.env.FLI_TIMEOUT = "undefined";
+    expect(() => new Client()).toThrow(/FLI_TIMEOUT must be a number of seconds/);
   });
 
   test("retries exhausted re-raises the last error", async () => {
