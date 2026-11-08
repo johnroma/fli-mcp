@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -203,9 +204,11 @@ def test_flights_command_json_error_includes_log_path(runner, monkeypatch, tmp_p
 
     monkeypatch.setattr("curl_cffi.requests.Session.post", fake_post)
 
+    # Keep validation from masking the mocked connection failure as this test ages.
+    travel_date = (datetime.now() + timedelta(days=30)).strftime("%Y-%m-%d")
     result = runner.invoke(
         app,
-        ["flights", "JFK", "LHR", "2026-10-25", "--format", "json"],
+        ["flights", "JFK", "LHR", travel_date, "--format", "json"],
     )
 
     assert result.exit_code == 1
